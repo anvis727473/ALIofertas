@@ -1,6 +1,5 @@
 // ═══════════════════════════════════════════════════════════
-//  ALIEXPRESS DEAL BOT — Tudo em um arquivo só
-//  Express + grammY + Supabase + AliExpress Affiliate API
+//  ALIEXPRESS DEAL BOT — Arquivo centralizado
 // ═══════════════════════════════════════════════════════════
 
 import crypto from 'node:crypto';
@@ -8,24 +7,38 @@ import express from 'express';
 import { Bot } from 'grammy';
 import { createClient } from '@supabase/supabase-js';
 
+// ── Validar variáveis de ambiente ──────────────────────────
+const REQUIRED = [
+  'TELEGRAM_BOT_TOKEN',
+  'SUPABASE_URL',
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'ALIEXPRESS_APP_KEY',
+  'ALIEXPRESS_APP_SECRET',
+  'ALIEXPRESS_TRACKING_ID',
+];
+
+const missing = REQUIRED.filter((k) => !process.env[k]);
+if (missing.length) {
+  console.error('❌ Variáveis faltando:', missing.join(', '));
+  console.error('Adicione no Render em Settings > Environment Variables');
+  process.exit(1);
+}
+
+console.log('✅ Variáveis de ambiente OK');
+
+const PORT = process.env.PORT || 10000;
+
 
 // ┌────────────────────────────────────────────────────────┐
-// │  1. CLIENTES E CONFIG                                  │
+// │  1. SUPABASE                                           │
 // └────────────────────────────────────────────────────────┘
-
-const PORT = process.env.PORT || 3000;
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
-
-
-// ┌────────────────────────────────────────────────────────┐
-// │  2. SUPABASE — Funções de banco                        │
-// └────────────────────────────────────────────────────────┘
+console.log('✅ Supabase conectado');
 
 async function upsertUser(chatId, username, firstName) {
   const { error } = await supabase
@@ -67,7 +80,7 @@ async function getRecentDeals(limit = 10) {
 
 
 // ┌────────────────────────────────────────────────────────┐
-// │  3. ALIEXPRESS — API de afiliados                      │
+// │  2. ALIEXPRESS API                                     │
 // └────────────────────────────────────────────────────────┘
 
 function aliSign(params, appSecret) {
@@ -150,24 +163,21 @@ async function generateAffLink(productUrl) {
 
 
 // ┌────────────────────────────────────────────────────────┐
-// │  4. FORMATAÇÃO — Montar mensagens                      │
+// │  3. FORMATAÇÃO                                         │
 // └────────────────────────────────────────────────────────┘
 
 function esc(text) {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function stars(r) {
-  return r > 0 ? '⭐'.repeat(Math.round(r)) : '—';
-}
-
 function dealMsg(product, affLink) {
+  const s = product.rating > 0 ? '⭐'.repeat(Math.round(product.rating)) : '—';
   return [
     `🔥 <b>${esc(product.title)}</b>`,
     ``,
     `💰 Preço: <b>${product.currency} ${product.price.toFixed(2)}</b>`,
     product.discount ? `🏷️ Desconto: <b>${product.discount}</b>` : null,
-    `📊 Avaliação: ${stars(product.rating)} (${product.rating.toFixed(1)}/5)`,
+    `📊 Avaliação: ${s} (${product.rating.toFixed(1)}/5)`,
     product.orders > 0 ? `🛒 ${product.orders.toLocaleString()} pedidos` : null,
     product.shop ? `🏪 Loja: ${product.shop}` : null,
     ``,
@@ -179,10 +189,18 @@ function dealMsg(product, affLink) {
 
 
 // ┌────────────────────────────────────────────────────────┐
-// │  5. BOT — Comandos e handlers                          │
+// │  4. BOT TELEGRAM                                       │
 // └────────────────────────────────────────────────────────┘
 
-// ── /start ────────────────────────────────────────────────
+let bot;
+try {
+  bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
+  console.log('✅ Bot criado');
+} catch (err) {
+  console.error('❌ Erro ao criar bot:', err.message);
+  process.exit(1);
+}
+
 bot.command('start', async (ctx) => {
   await upsertUser(ctx.chat.id, ctx.from.username, ctx.from.first_name);
   await ctx.reply(
@@ -193,9 +211,9 @@ bot.command('start', async (ctx) => {
       ``,
       `📌 <b>Como usar:</b>`,
       `• <code>/buscar fone bluetooth</code>`,
-      `• Ou simplesmente envie o nome do produto`,
+      `• Ou envie o nome do produto`,
       ``,
-      `📌 <b>Outros comandos:</b>`,
+      `📌 <b>Comandos:</b>`,
       `• /buscar &lt;produto&gt;`,
       `• /ofertas`,
       `• /postar &lt;url&gt;`,
@@ -205,7 +223,6 @@ bot.command('start', async (ctx) => {
   );
 });
 
-// ── /ajuda ────────────────────────────────────────────────
 bot.command('ajuda', async (ctx) => {
   await ctx.reply(
     [
@@ -215,10 +232,10 @@ bot.command('ajuda', async (ctx) => {
       `→ Busca e gera links de afiliado`,
       ``,
       `<code>/ofertas</code>`,
-      `→ Últimas 10 ofertas postadas`,
+      `→ Últimas 10 ofertas`,
       ``,
       `<code>/postar https://aliexpress.com/item/...</code>`,
-      `→ Gera link de afiliado para uma URL`,
+      `→ Gera link de afiliado`,
       ``,
       `Ou digite o nome de qualquer produto!`,
     ].join('\n'),
@@ -226,7 +243,6 @@ bot.command('ajuda', async (ctx) => {
   );
 });
 
-// ── /buscar ───────────────────────────────────────────────
 bot.command('buscar', async (ctx) => {
   const keyword = ctx.match?.trim();
   if (!keyword) {
@@ -235,7 +251,6 @@ bot.command('buscar', async (ctx) => {
   await doSearch(ctx, keyword);
 });
 
-// ── /ofertas ──────────────────────────────────────────────
 bot.command('ofertas', async (ctx) => {
   const deals = await getRecentDeals(10);
   if (!deals.length) return ctx.reply('📭 Nenhuma oferta registrada ainda.');
@@ -247,7 +262,6 @@ bot.command('ofertas', async (ctx) => {
   await ctx.reply(msg, { parse_mode: 'HTML', disable_web_page_preview: true });
 });
 
-// ── /postar ───────────────────────────────────────────────
 bot.command('postar', async (ctx) => {
   const url = ctx.match?.trim();
   if (!url || !url.startsWith('http')) {
@@ -256,7 +270,7 @@ bot.command('postar', async (ctx) => {
   try {
     const affLink = await generateAffLink(url);
     await ctx.reply(
-      `🔗 <b>Seu link de afiliado:</b>\n\n<a href="${affLink}">${affLink}</a>`,
+      `🔗 <b>Seu link:</b>\n\n<a href="${affLink}">${affLink}</a>`,
       { parse_mode: 'HTML' }
     );
   } catch (err) {
@@ -265,7 +279,6 @@ bot.command('postar', async (ctx) => {
   }
 });
 
-// ── Texto livre → busca ──────────────────────────────────
 bot.on('message:text', async (ctx) => {
   const text = ctx.message.text.trim();
   if (text.startsWith('/') || text.length < 2) return;
@@ -274,7 +287,7 @@ bot.on('message:text', async (ctx) => {
 
 
 // ┌────────────────────────────────────────────────────────┐
-// │  6. BUSCA — Lógica principal                           │
+// │  5. BUSCA PRINCIPAL                                    │
 // └────────────────────────────────────────────────────────┘
 
 async function doSearch(ctx, keyword) {
@@ -292,7 +305,7 @@ async function doSearch(ctx, keyword) {
     if (!products.length) {
       return ctx.api.editMessageText(
         msg.chat.id, msg.message_id,
-        `😕 Nenhum resultado para "<b>${esc(keyword)}</b>". Tente outros termos.`,
+        `😕 Nenhum resultado para "<b>${esc(keyword)}</b>".`,
         { parse_mode: 'HTML' }
       );
     }
@@ -309,9 +322,15 @@ async function doSearch(ctx, keyword) {
         const text = dealMsg(product, affLink);
 
         if (product.image) {
-          await ctx.replyWithPhoto(product.image, { caption: text, parse_mode: 'HTML' });
+          await ctx.replyWithPhoto(product.image, {
+            caption: text,
+            parse_mode: 'HTML',
+          });
         } else {
-          await ctx.reply(text, { parse_mode: 'HTML', disable_web_page_preview: false });
+          await ctx.reply(text, {
+            parse_mode: 'HTML',
+            disable_web_page_preview: false,
+          });
         }
 
         await saveDeal({
@@ -332,66 +351,92 @@ async function doSearch(ctx, keyword) {
     }
   } catch (err) {
     console.error('doSearch:', err.message);
-    await ctx.api.editMessageText(
-      msg.chat.id, msg.message_id,
-      '❌ Erro na busca. Tente novamente em instantes.'
-    );
+    try {
+      await ctx.api.editMessageText(
+        msg.chat.id, msg.message_id,
+        '❌ Erro na busca. Tente novamente.'
+      );
+    } catch (_) {}
   }
 }
 
-// ── Tratamento global de erros ────────────────────────────
 bot.catch((err) => console.error('bot.catch:', err.message));
+
+console.log('✅ Handlers do bot registrados');
 
 
 // ┌────────────────────────────────────────────────────────┐
-// │  7. SERVIDOR EXPRESS + WEBHOOK                         │
+// │  6. SERVIDOR EXPRESS                                   │
 // └────────────────────────────────────────────────────────┘
 
 const app = express();
 app.use(express.json());
 
-// Health checks (mantém o Render acordado)
 app.get('/', (_req, res) => res.json({
   status: 'ok',
   bot: 'AliExpress Deal Bot',
   uptime: Math.round(process.uptime()),
 }));
+
 app.get('/health', (_req, res) => res.sendStatus(200));
 
-// Endpoint do webhook
-app.post(`/webhook/${process.env.WEBHOOK_SECRET}`, async (req, res) => {
+const webhookPath = `/webhook/${process.env.WEBHOOK_SECRET || 'default'}`;
+app.post(webhookPath, async (req, res) => {
   try { await bot.handleUpdate(req.body); }
   catch (err) { console.error('webhook:', err.message); }
   res.sendStatus(200);
 });
 
-// Configurar webhook ao subir
+
+// ┌────────────────────────────────────────────────────────┐
+// │  7. INICIAR                                            │
+// └────────────────────────────────────────────────────────┘
+
 async function setupWebhook() {
   const base = process.env.RENDER_EXTERNAL_URL;
   const secret = process.env.WEBHOOK_SECRET;
+
+  if (!base) {
+    console.error('❌ RENDER_EXTERNAL_URL não definido');
+    return;
+  }
+  if (!secret) {
+    console.error('❌ WEBHOOK_SECRET não definido');
+    return;
+  }
+
   const url = `${base}/webhook/${secret}`;
 
-  await bot.api.deleteWebhook({ drop_pending_updates: true });
-  await bot.api.setWebhook(url, {
-    secret_token: secret,
-    allowed_updates: ['message', 'edited_message', 'callback_query'],
-  });
-
-  const me = await bot.api.getMe();
-  console.log(`✅ Webhook ativo: ${url}`);
-  console.log(`🤖 Bot: @${me.username}`);
+  try {
+    await bot.api.deleteWebhook({ drop_pending_updates: true });
+    await bot.api.setWebhook(url, {
+      secret_token: secret,
+      allowed_updates: ['message', 'edited_message', 'callback_query'],
+    });
+    const me = await bot.api.getMe();
+    console.log(`✅ Webhook: ${url}`);
+    console.log(`🤖 Bot: @${me.username}`);
+  } catch (err) {
+    console.error('❌ Webhook erro:', err.message);
+  }
 }
 
-// Iniciar
-app.listen(PORT, async () => {
-  console.log(`🚀 Porta ${PORT}`);
+app.listen(PORT, '0.0.0.0', async () => {
+  console.log(`🚀 Servidor na porta ${PORT}`);
 
-  if (process.env.TELEGRAM_MODE === 'webhook') {
+  const mode = process.env.TELEGRAM_MODE || 'webhook';
+  console.log(`📡 Modo: ${mode}`);
+
+  if (mode === 'webhook') {
     await setupWebhook();
   } else {
-    bot.start({
-      onStart: (info) => console.log(`🤖 @${info.username} (polling)`),
-      drop_pending_updates: true,
-    });
+    try {
+      bot.start({
+        onStart: (info) => console.log(`🤖 @${info.username} (polling)`),
+        drop_pending_updates: true,
+      });
+    } catch (err) {
+      console.error('❌ Polling erro:', err.message);
+    }
   }
 });
